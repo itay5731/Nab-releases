@@ -1,0 +1,27 @@
+Nab
+Copyright (c) 2026 Itay Nadir. All rights reserved.
+
+Nab is free to use, but it is not open source.
+
+You may download the official Nab installers and updates published in this repository, install them on any number
+of computers you use, and use Nab for personal or commercial work, free of charge.
+
+You may not, except as far as applicable law expressly allows it:
+  - copy, sell, rent, sublicense or redistribute Nab, its installers or its updates, or host them elsewhere;
+  - modify, decompile, disassemble or reverse engineer Nab, or create derivative works of it;
+  - remove or change any copyright, trademark or license notice in Nab;
+  - use Nab's name or logo in a way that suggests endorsement, without written permission.
+
+The pictures, text and logo in this repository are part of Nab and covered by this license.
+
+Nab is provided "as is", without warranty of any kind, express or implied, including the warranties of
+merchantability, fitness for a particular purpose and non-infringement. In no event shall the author be liable for
+any claim, damages or other liability arising from, out of or in connection with Nab or its use, including loss of
+data or changes made to your GitLab through Nab.
+
+Third-party components. Nab includes open-source software that remains under its own licenses (MIT, Apache-2.0,
+ISC, BSD-3-Clause, MPL-2.0 and the SIL Open Font License); see THIRD_PARTY_NOTICES.md. Nothing in this license
+limits your rights under those licenses. AI models are not part of Nab: they are downloaded separately, under their
+own licenses (Nab's model, nab-qwen, is a fine-tune of Qwen and is licensed under Apache-2.0).
+
+Trademarks. GitLab is a trademark of GitLab Inc. Nab is not affiliated with or endorsed by GitLab Inc.
