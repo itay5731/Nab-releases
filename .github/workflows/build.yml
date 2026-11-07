@@ -1,0 +1,258 @@
+name: Build a release
+
+# Builds Nab for Windows (NSIS + MSI), macOS (universal, not notarized) and Linux (AppImage + .deb) from the
+# PRIVATE code repository itay5731/Nab at the given tag, signs the update bundles with Nab's updater key, and
+# uploads everything to a DRAFT release here. Public repository = free Actions minutes; the code itself is never
+# published (only the installers). Nothing reaches users until you check the draft and click "Publish release".
+#
+# Start it by hand: Actions > Build a release > Run workflow, version tag e.g. v1.0.0 (the tag must exist in itay5731/Nab).
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   CODE_TOKEN    fine-grained token, "Contents: read-only" on itay5731/Nab only
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# Variable (optional): NAB_MODEL_URL, the nab-qwen manifest URL (becomes VITE_NAB_MODEL_URL)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag in itay5731/Nab, e.g. v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASES_REPO: itay5731/Nab-releases
+  CODE_REPO: itay5731/Nab
+
+jobs:
+  check:
+    name: Check version and config
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - name: Check the code token is set
+        shell: bash
+        env:
+          CODE_TOKEN: ${{ secrets.CODE_TOKEN }}
+        run: '[ -n "$CODE_TOKEN" ] || { echo "::error::The CODE_TOKEN secret is not set"; exit 1; }'
+      - name: Fetch the code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CODE_REPO }}
+          ref: ${{ inputs.tag }}
+          token: ${{ secrets.CODE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # package.json, src-tauri/tauri.conf.json and src-tauri/Cargo.toml must carry the same version, and a tag must
+      # be exactly v<that version> (npm run release:bump -- <version> sets all three).
+      - name: Check the versions match (and match the tag)
+        id: v
+        shell: bash
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(sed -n '/^\[package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' src-tauri/Cargo.toml | head -1)
+          echo "package.json $pkg, tauri.conf.json $conf, Cargo.toml $cargo"
+          if [ "$pkg" != "$conf" ] || [ "$pkg" != "$cargo" ]; then
+            echo "::error::Versions differ: package.json $pkg, tauri.conf.json $conf, Cargo.toml $cargo. Run npm run release:bump -- <version>."
+            exit 1
+          fi
+          if [ "v$pkg" != "${{ inputs.tag }}" ]; then
+            echo "::error::The tag ${{ inputs.tag }} does not match the version v$pkg"
+            exit 1
+          fi
+          echo "version=$pkg" >> "$GITHUB_OUTPUT"
+          echo "tag=v$pkg" >> "$GITHUB_OUTPUT"
+
+      - name: Check the updater config
+        shell: bash
+        run: |
+          node -e '
+            const c = require("./src-tauri/tauri.conf.json");
+            const u = c.plugins.updater;
+            const want = "https://github.com/" + process.env.RELEASES_REPO + "/releases/latest/download/latest.json";
+            if (/^REPLACE_WITH/.test(u.pubkey)) { console.log("::error::tauri.conf.json plugins.updater.pubkey is still the placeholder (docs/RELEASING.md)"); process.exit(1); }
+            if (!u.endpoints.includes(want)) { console.log("::error::tauri.conf.json plugins.updater.endpoints must contain " + want); process.exit(1); }
+            if (c.bundle.createUpdaterArtifacts !== true) { console.log("::error::bundle.createUpdaterArtifacts must be true"); process.exit(1); }
+          '
+
+      # The CHANGELOG.md section of this version is the release text and the update notes in latest.json.
+      - name: Check the release notes exist
+        shell: bash
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { sectionFor } from "./scripts/changelog.mjs";
+            const v = process.argv[1];
+            if (!sectionFor(readFileSync("CHANGELOG.md", "utf8"), v).trim()) { console.log(`::error::CHANGELOG.md has no "## [${v}]" section`); process.exit(1); }
+          ' "${{ steps.v.outputs.version }}"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: --bundles nsis,msi
+          - name: macOS universal
+            os: macos-latest
+            args: --target universal-apple-darwin --bundles app,dmg
+          - name: Linux
+            os: ubuntu-22.04
+            args: --bundles appimage,deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CODE_REPO }}
+          ref: ${{ inputs.tag }}
+          token: ${{ secrets.CODE_TOKEN }}
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev pkg-config patchelf libfuse2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install packages
+        shell: bash
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+
+      - name: Check the signing key is set
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is not set"; exit 1; }
+
+      # No Apple Developer account: the Mac app is signed ad hoc ("-") so Apple Silicon runs it, and people open it
+      # once through System Settings (see the public README). With an account, add the APPLE_* secrets and drop this.
+      - name: macOS ad-hoc signing
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo '{"bundle":{"macOS":{"signingIdentity":"-"}}}' > src-tauri/tauri.ci.json
+
+      - name: Build
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_NAB_MODEL_URL: ${{ vars.NAB_MODEL_URL }}
+        run: |
+          extra=""
+          [ -f src-tauri/tauri.ci.json ] && extra="--config src-tauri/tauri.ci.json"
+          npx tauri build ${{ matrix.args }} $extra
+
+      # One flat folder per platform. The macOS update bundle comes out as "Nab.app.tar.gz"; it becomes
+      # Nab_<version>_universal.app.tar.gz (and its .sig) here, so the release says what it is.
+      - name: Collect the installers
+        shell: bash
+        run: |
+          v="${{ needs.check.outputs.version }}"
+          mkdir -p out
+          find src-tauri/target -path '*/release/bundle/*' -type f \
+            \( -name '*-setup.exe' -o -name '*-setup.exe.sig' -o -name '*.msi' -o -name '*.msi.sig' \
+               -o -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
+               -o -name '*.AppImage' -o -name '*.AppImage.sig' -o -name '*.deb' \) | while read -r f; do
+            name="$(basename "$f")"
+            case "$name" in
+              *.app.tar.gz|*.app.tar.gz.sig) case "$name" in *_universal*) ;; *) name="$(echo "$name" | sed "s/\.app\.tar\.gz/_${v}_universal.app.tar.gz/")" ;; esac ;;
+            esac
+            cp "$f" "out/$name"
+          done
+          ls -la out
+          ls out/*.sig >/dev/null 2>&1 || { echo "::error::No .sig files: the updater bundles were not signed"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nab-${{ runner.os }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Draft release
+    needs: [check, build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CODE_REPO }}
+          ref: ${{ inputs.tag }}
+          token: ${{ secrets.CODE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+
+      # latest.json: every signed update bundle with its signature and its download URL in the public repository
+      - name: Write latest.json and the release notes
+        shell: bash
+        run: |
+          v="${{ needs.check.outputs.version }}"; tag="${{ needs.check.outputs.tag }}"
+          for f in files/*; do case "$f" in *.sig) ;; *) printf '%s\t%s\n' "$f" "$(basename "$f")" ;; esac; done > uploaded.tsv
+          node scripts/make-latest-json.mjs --version "$v" \
+            --base-url "https://github.com/${RELEASES_REPO}/releases/download/${tag}" \
+            --uploaded uploaded.tsv --out files/latest.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { sectionFor } from "./scripts/changelog.mjs";
+            process.stdout.write(sectionFor(readFileSync("CHANGELOG.md", "utf8"), process.argv[1]));
+          ' "$v" > release-notes.md
+          node -e '
+            const p = require("./files/latest.json").platforms;
+            const need = ["windows-x86_64", "darwin-x86_64", "darwin-aarch64", "linux-x86_64"];
+            const miss = need.filter((k) => !p[k]);
+            if (miss.length) { console.log("::error::latest.json has no " + miss.join(", ")); process.exit(1); }
+            console.log("latest.json platforms: " + Object.keys(p).join(", "));
+          '
+          ls -la files
+
+      - name: Upload to the draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check.outputs.tag }}
+          target_commitish: main
+          name: Nab ${{ needs.check.outputs.tag }}
+          body_path: release-notes.md
+          draft: true
+          prerelease: ${{ contains(needs.check.outputs.version, '-') }}
+          fail_on_unmatched_files: true
+          files: files/*
