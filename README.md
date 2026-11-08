@@ -13,7 +13,17 @@
 
 **Less clicking. More shipping.** Nab works with GitLab.com and self-managed GitLab.
 
-<a href="assets/screens/showcase.png"><img src="assets/screens/showcase.png" alt="Nab: Home, the board, a merge request review, a pipeline and the inbox"></a>
+<img src="assets/gifs/nab-tour.gif" alt="A quick tour of Nab: Home, a merge request review, the board and pipelines">
+
+## An assistant that thinks
+
+Nab's AI runs on your computer. Ask it a real question and it weighs your issues before it answers, then explains itself when you ask "why?".
+
+<img src="assets/gifs/nab-ai-reason.gif" alt="Asking Nab which issue is easiest to close, and why">
+
+Or just tell it what to do. It does it, offers Undo, and knows what "it" means next.
+
+<img src="assets/gifs/nab-ai-act.gif" alt="Telling Nab to assign an issue, then to open it">
 
 ## What you get
 
@@ -37,8 +47,6 @@
 - **Never miss what matters.** Notifications for failed pipelines, mentions, reviews and due dates, from the tray,
   even with the window closed.
 - **Your accounts, your team.** Several GitLab accounts at once, shared team rules, light and dark themes, a desktop widget.
-
-<a href="assets/screens/ai-light.png"><img src="assets/screens/ai-light.png" alt="Ask Nab answering a question and a follow-up"></a>
 
 <a href="assets/screens/mr-light.png"><img src="assets/screens/mr-light.png" alt="Reviewing a merge request: the file tree, the diff and a resolved thread"></a>
 
@@ -88,6 +96,9 @@
 Nab checks for updates by itself, shows what's new, and installs only when you say so.
 
 ## FAQ
+
+**Can the AI be faster?** If you installed Ollama yourself, set these once and restart Ollama (Nab sets them for you when it installs Ollama):
+`OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, `OLLAMA_MAX_LOADED_MODELS=2`. Laptops: plug in the charger, since GPUs slow down a lot on battery or a weak charger.
 
 **Does my code or my issues go to an AI company?**
 Not unless you choose a cloud AI and add your own key. The default AI runs on your computer through Ollama.
